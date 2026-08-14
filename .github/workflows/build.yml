@@ -19,14 +19,18 @@ jobs:
         shell: pwsh
         run: ./build.ps1
 
+      - name: Rename exe for release (ASCII-safe name)
+        shell: pwsh
+        run: Copy-Item "DeepSeek Harness 一键启动.exe" "DeepSeek-Harness-Launcher.exe" -Force
+
       - name: Upload exe artifact
         uses: actions/upload-artifact@v4
         with:
           name: DeepSeek-Harness-Launcher
-          path: DeepSeek Harness 一键启动.exe
+          path: DeepSeek-Harness-Launcher.exe
 
       - name: Attach to release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: DeepSeek Harness 一键启动.exe
+          files: DeepSeek-Harness-Launcher.exe
