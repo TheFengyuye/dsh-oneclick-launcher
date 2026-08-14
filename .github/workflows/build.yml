@@ -1,0 +1,28 @@
+name: build
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build launcher
+        shell: pwsh
+        run: ./build.ps1
+
+      - name: Upload exe artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: DeepSeek-Harness-Launcher
+          path: DeepSeek Harness 一键启动.exe
+
+      - name: Attach to release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: DeepSeek Harness 一键启动.exe
