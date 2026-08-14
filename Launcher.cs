@@ -212,12 +212,39 @@ namespace DshLauncher
             return true;
         }
 
+        // 读取用户级 .npmrc 里的配置项 (如 cache=、prefix=), 兼容自定义盘符/路径的安装
+        private static string ReadNpmrcValue(string key)
+        {
+            try
+            {
+                string npmrc = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".npmrc");
+                if (!File.Exists(npmrc)) return null;
+                string[] lines = File.ReadAllLines(npmrc);
+                for (int i = 0; i < lines.Length; i++)
+                {
+                    string line = lines[i].Trim();
+                    if (line.Length == 0 || line.StartsWith("#") || line.StartsWith(";")) continue;
+                    int eq = line.IndexOf('=');
+                    if (eq <= 0) continue;
+                    string k = line.Substring(0, eq).Trim();
+                    if (string.Equals(k, key, StringComparison.OrdinalIgnoreCase))
+                    {
+                        string v = line.Substring(eq + 1).Trim();
+                        if (v.Length > 0) return v;
+                    }
+                }
+            }
+            catch { }
+            return null;
+        }
+
         private static string FindDsh()
         {
             if (_dshBin.Length > 0 && File.Exists(_dshBin)) return _dshBin;
 
-            // npx 缓存: 由 npm 管理, 通常完整可靠
+            // npx 缓存: 优先环境变量, 其次 .npmrc 的 cache= (用户可能自定义到其他盘), 最后默认位置
             string cache = Environment.GetEnvironmentVariable("npm_config_cache");
+            if (string.IsNullOrEmpty(cache)) cache = ReadNpmrcValue("cache");
             if (string.IsNullOrEmpty(cache))
                 cache = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "npm-cache");
             try
@@ -235,8 +262,12 @@ namespace DshLauncher
             }
             catch { }
 
-            // npm 全局安装
-            string globalRoot = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "npm", "node_modules");
+            // npm 全局安装: 优先 .npmrc 的 prefix= (可能自定义到其他盘), 其次默认位置
+            string globalRoot = null;
+            string prefix = ReadNpmrcValue("prefix");
+            if (!string.IsNullOrEmpty(prefix)) globalRoot = Path.Combine(prefix, "node_modules");
+            if (globalRoot == null)
+                globalRoot = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "npm", "node_modules");
             string g = Path.Combine(globalRoot, "@deepseek-ai", "dsh", "lib", "bin.js");
             if (File.Exists(g)) return g;
 
