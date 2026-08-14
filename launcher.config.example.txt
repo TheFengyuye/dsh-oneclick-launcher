@@ -1,0 +1,24 @@
+# DeepSeek Harness 一键启动器 配置示例
+# 把本文件复制为 launcher.config.txt 放在 exe 同目录, 按需修改。
+# 以 # 或 ; 开头的是注释。所有项都可省略, 省略则自动检测/使用默认值。
+
+# Node.js 可执行文件路径 (留空则自动检测 PATH 与常见安装位置)
+# NodeExe=C:\Program Files\nodejs\node.exe
+
+# dsh 入口 (bin.js)。留空则按顺序自动检测:
+#   内置安装目录 > npm 全局 > npx 缓存 > exe 目录
+# 一般不需要设置; 只有当你手动安装了特殊位置的 dsh 时才需要。
+# DshBin=C:\path\to\node_modules\@deepseek-ai\dsh\lib\bin.js
+
+# Web GUI 地址与端口
+# Url=http://127.0.0.1:3080
+# Port=3080
+
+# dsh 数据目录 (留空则用 %USERPROFILE%\.dsh)
+# DshHome=C:\Users\you\.dsh
+
+# 服务工作目录 (留空则用 exe 所在目录)
+# WorkDir=C:\some\workspace
+
+# 一键安装 dsh 时的安装目录 (留空则用 %LOCALAPPDATA%\DeepSeekHarness)
+# InstallDir=D:\tools\DeepSeekHarness

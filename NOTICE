@@ -1,0 +1,15 @@
+NOTICE — 图标素材说明
+
+本项目默认图标使用"你这吃白饭的蓝色大肥鱼"梗图（蓝发鲸鱼女仆角色），来源：
+
+  https://github.com/YunYueSama/codex-deepseek-pet
+  文件: assets/你这吃白饭的蓝色大肥鱼.png  (以及 build/icon.png)
+
+该角色图片的版权归原作者所有，不随本项目代码的 MIT 许可分发。
+允许个人使用；商用、再分发或制作衍生作品前，请先获得原作者授权
+（参考原仓库 ASSET_LICENSE.md）。
+
+如果你想换掉该素材：
+  1. 删除 icon-source/ 目录（meme.png / icon.png）
+  2. 重新运行 build.ps1 —— 会自动回退到内置的鲸鱼图标（make-icon.ps1）
+  3. 或者把 icon-source/meme.png 替换成你自己的图后再构建

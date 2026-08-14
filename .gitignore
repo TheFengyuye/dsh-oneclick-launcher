@@ -1,0 +1,14 @@
+# 运行时日志
+launcher.log
+dsh-server.log
+
+# 用户本机配置 (含个人路径, 不应提交)
+launcher.config.txt
+
+# 构建中间产物
+DSH-Launcher.exe
+node_modules/
+
+# Windows
+*.user
+Thumbs.db
