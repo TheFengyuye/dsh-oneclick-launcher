@@ -181,23 +181,42 @@ namespace DshLauncher
             return null;
         }
 
+        // 内置安装的完整性检查: 中断的安装会留下残缺依赖树 (每次缺的包还不一样),
+        // 只靠 bin.js 存在无法判断好坏, 必须抽查关键依赖 (直接 + 传递依赖里的高频缺口)。
+        private static bool ManagedInstallVerified()
+        {
+            string nm = Path.Combine(DefaultInstallDir(), "node_modules");
+            if (!File.Exists(Path.Combine(nm, "@deepseek-ai", "dsh", "lib", "bin.js"))) return false;
+            string[] canaries = new string[]
+            {
+                "zod",
+                "js-yaml",
+                "commander",
+                "chokidar",
+                "@deepseek-ai/dsh-base",
+                "@deepseek-ai/dsh-web-app",
+                "@deepseek-ai/dsh-client-connection",
+                "@deepseek-ai/dsh-host-apiproxy",
+                "@deepseek-ai/dsh-client-web",
+                "@deepseek-ai/dsh-typert-registry",
+                "@deepseek-ai/dsh-session-title",
+            };
+            for (int i = 0; i < canaries.Length; i++)
+            {
+                if (!File.Exists(Path.Combine(nm, canaries[i].Replace("/", "\\"), "package.json")))
+                {
+                    Log("managed install incomplete (" + canaries[i] + " missing).");
+                    return false;
+                }
+            }
+            return true;
+        }
+
         private static string FindDsh()
         {
             if (_dshBin.Length > 0 && File.Exists(_dshBin)) return _dshBin;
 
-            string m = ManagedDshBin();
-            if (File.Exists(m))
-            {
-                // 完整性检查: 内置安装可能因中断而残缺 (缺关键依赖), 残缺则跳过, 走后续检测并提示修复
-                string canary = Path.Combine(DefaultInstallDir(), "node_modules", "js-yaml", "dist", "js-yaml.mjs");
-                if (File.Exists(canary)) return m;
-                Log("managed install incomplete (js-yaml missing), skipping.");
-            }
-
-            string globalRoot = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "npm", "node_modules");
-            string g = Path.Combine(globalRoot, "@deepseek-ai", "dsh", "lib", "bin.js");
-            if (File.Exists(g)) return g;
-
+            // npx 缓存: 由 npm 管理, 通常完整可靠
             string cache = Environment.GetEnvironmentVariable("npm_config_cache");
             if (string.IsNullOrEmpty(cache))
                 cache = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "npm-cache");
@@ -216,6 +235,15 @@ namespace DshLauncher
             }
             catch { }
 
+            // npm 全局安装
+            string globalRoot = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "npm", "node_modules");
+            string g = Path.Combine(globalRoot, "@deepseek-ai", "dsh", "lib", "bin.js");
+            if (File.Exists(g)) return g;
+
+            // 内置安装目录 (必须通过完整性检查才使用, 否则视为未安装, 提示一键修复)
+            if (ManagedInstallVerified()) return ManagedDshBin();
+
+            // exe 目录便携安装
             string portable = Path.Combine(Application.StartupPath, "node_modules", "@deepseek-ai", "dsh", "lib", "bin.js");
             if (File.Exists(portable)) return portable;
 
@@ -314,17 +342,10 @@ namespace DshLauncher
                 Log("install failed: " + error);
                 return false;
             }
-            if (!File.Exists(ManagedDshBin()))
+            if (!ManagedInstallVerified())
             {
-                error = "安装完成, 但未找到 dsh 入口文件。";
-                Log("install finished but dsh bin missing: " + ManagedDshBin());
-                return false;
-            }
-            string canary = Path.Combine(DefaultInstallDir(), "node_modules", "js-yaml", "dist", "js-yaml.mjs");
-            if (!File.Exists(canary))
-            {
-                error = "安装完成但依赖不完整 (js-yaml 缺失), 请重试安装。";
-                Log("install finished but js-yaml missing: " + canary);
+                error = "安装完成但依赖不完整, 请重试安装。";
+                Log("install finished but managed install verification failed.");
                 return false;
             }
             ResolvedDshBin = ManagedDshBin();
@@ -442,7 +463,8 @@ namespace DshLauncher
             {
                 ProcessStartInfo psi = new ProcessStartInfo();
                 psi.FileName = ResolvedNodeExe;
-                psi.Arguments = "\"" + ResolvedDshBin + "\" web";
+                // 显式传端口, 让配置里的 Port 与探测/打开地址保持一致
+                psi.Arguments = "\"" + ResolvedDshBin + "\" web --port " + _port;
                 psi.UseShellExecute = false;
                 psi.CreateNoWindow = true;
                 psi.WindowStyle = ProcessWindowStyle.Hidden;
