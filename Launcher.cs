@@ -41,6 +41,7 @@ namespace DshLauncher
         private static readonly object LogLock = new object();
 
         private static Process _serverProc;
+        private static Process _installProc;   // 正在运行的 npm 安装进程 (可被停止)
         private static bool _ownServer;
         private static bool _stopping;
         private static Mutex _mutex;
@@ -96,8 +97,17 @@ namespace DshLauncher
                 {
                     if (!_mutex.WaitOne(0))
                     {
-                        Log("another launcher instance is running; opening browser and exiting.");
-                        OpenBrowser();
+                        if (IsServerUp())
+                        {
+                            Log("another launcher instance is running; server up; opening browser.");
+                            OpenBrowser();
+                        }
+                        else
+                        {
+                            Log("another launcher instance is running but server is down.");
+                            MessageBox.Show("启动器已在后台运行, 但服务没有启动。\n\n请右键托盘图标选择「停止并退出」, 然后再双击启动器。",
+                                "DeepSeek Harness 启动器", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                        }
                         return 0;
                     }
                 }
@@ -176,7 +186,13 @@ namespace DshLauncher
             if (_dshBin.Length > 0 && File.Exists(_dshBin)) return _dshBin;
 
             string m = ManagedDshBin();
-            if (File.Exists(m)) return m;
+            if (File.Exists(m))
+            {
+                // 完整性检查: 内置安装可能因中断而残缺 (缺关键依赖), 残缺则跳过, 走后续检测并提示修复
+                string canary = Path.Combine(DefaultInstallDir(), "node_modules", "js-yaml", "dist", "js-yaml.mjs");
+                if (File.Exists(canary)) return m;
+                Log("managed install incomplete (js-yaml missing), skipping.");
+            }
 
             string globalRoot = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "npm", "node_modules");
             string g = Path.Combine(globalRoot, "@deepseek-ai", "dsh", "lib", "bin.js");
@@ -228,6 +244,7 @@ namespace DshLauncher
                 return false;
             }
             string prefix = DefaultInstallDir();
+            CleanInstallDir(prefix);
             try { Directory.CreateDirectory(prefix); }
             catch (Exception ex) { error = "无法创建安装目录: " + ex.Message; return false; }
 
@@ -279,6 +296,7 @@ namespace DshLauncher
                     error = "无法启动 npm 进程。";
                     return false;
                 }
+                _installProc = proc;   // 记住安装进程, 用户停止退出时一并杀掉, 避免留下残缺安装
             }
             catch (Exception ex)
             {
@@ -288,6 +306,7 @@ namespace DshLauncher
             proc.BeginOutputReadLine();
             proc.BeginErrorReadLine();
             proc.WaitForExit();
+            _installProc = null;
 
             if (proc.ExitCode != 0)
             {
@@ -301,9 +320,29 @@ namespace DshLauncher
                 Log("install finished but dsh bin missing: " + ManagedDshBin());
                 return false;
             }
+            string canary = Path.Combine(DefaultInstallDir(), "node_modules", "js-yaml", "dist", "js-yaml.mjs");
+            if (!File.Exists(canary))
+            {
+                error = "安装完成但依赖不完整 (js-yaml 缺失), 请重试安装。";
+                Log("install finished but js-yaml missing: " + canary);
+                return false;
+            }
             ResolvedDshBin = ManagedDshBin();
             Log("install OK, dsh bin=" + ResolvedDshBin);
             return true;
+        }
+
+        // 清空安装目录里可能残缺的旧安装, 保证全新安装
+        private static void CleanInstallDir(string prefix)
+        {
+            try
+            {
+                string nm = Path.Combine(prefix, "node_modules");
+                if (Directory.Exists(nm)) Directory.Delete(nm, true);
+            }
+            catch (Exception ex) { Log("clean node_modules error: " + ex.Message); }
+            try { string pj = Path.Combine(prefix, "package.json"); if (File.Exists(pj)) File.Delete(pj); } catch { }
+            try { string pl = Path.Combine(prefix, "package-lock.json"); if (File.Exists(pl)) File.Delete(pl); } catch { }
         }
 
         // ---------------- 配置 ----------------
@@ -493,6 +532,23 @@ namespace DshLauncher
 
         internal static bool OwnsServer { get { return _ownServer; } }
 
+        internal static bool IsStopping { get { return _stopping; } }
+
+        // 用户停止退出时, 杀掉仍在进行的 npm 安装进程, 避免留下残缺安装
+        internal static void KillInstallProc()
+        {
+            try
+            {
+                if (_installProc != null)
+                {
+                    if (!_installProc.HasExited) _installProc.Kill();
+                    _installProc = null;
+                    Log("install process killed on exit.");
+                }
+            }
+            catch { }
+        }
+
         internal static void ReleaseMutexIfOwned()
         {
             try
@@ -547,6 +603,7 @@ namespace DshLauncher
         private bool _timeoutShown;
         private bool _balloonShown;
         private bool _starting;
+        private int _restartCount;
         private bool _installing;
         private Thread _pollThread;
 
@@ -677,7 +734,7 @@ namespace DshLauncher
 
         private void ShowNeedInstallState()
         {
-            _statusLabel.Text = "首次运行: 未检测到 DeepSeek Harness, 点击右侧按钮一键安装。";
+            _statusLabel.Text = "未检测到可用的 DeepSeek Harness (或安装不完整), 点击右侧按钮一键安装/修复。";
             _btnOpen.Enabled = false;
             _btnInstall.Text = "一键安装 dsh";
             _btnInstall.Visible = true;
@@ -799,6 +856,7 @@ namespace DshLauncher
         {
             if (_serverUp) return;
             _serverUp = true;
+            _restartCount = 0;
             _statusLabel.Text = "服务已启动。";
             _btnOpen.Enabled = true;
             if (!_balloonShown)
@@ -819,14 +877,40 @@ namespace DshLauncher
             Program.Log("start timeout reached.");
         }
 
+        // 服务进程意外退出: 最多自动重启 3 次 (每次间隔 5 秒)
         public void OnServerExitedUnexpected()
         {
-            if (_timeoutShown) return;
-            _timeoutShown = true;
+            if (Program.IsStopping) return;
             _serverUp = false;
-            _statusLabel.Text = "服务意外退出, 请查看 dsh-server.log";
-            _btnOpen.Enabled = false;
-            _tray.ShowBalloonTip(4000, "DeepSeek Harness", "服务意外退出, 日志已写入 dsh-server.log。", ToolTipIcon.Error);
+            _starting = false;
+            if (_restartCount >= 3)
+            {
+                _timeoutShown = true;
+                _statusLabel.Text = "服务连续 3 次启动失败, 请查看 dsh-server.log";
+                _btnOpen.Enabled = false;
+                _tray.ShowBalloonTip(5000, "DeepSeek Harness", "服务连续 3 次启动失败, 已停止自动重试。", ToolTipIcon.Error);
+                Program.Log("server restart limit reached.");
+                return;
+            }
+            _restartCount++;
+            _timeoutShown = false;
+            _statusLabel.Text = "服务意外退出, 5 秒后自动重启 (第 " + _restartCount + "/3 次)…";
+            Program.Log("server exited unexpectedly, auto-restart #" + _restartCount);
+            Thread t = new Thread(delegate()
+            {
+                Thread.Sleep(5000);
+                if (!IsHandleCreated) return;
+                try
+                {
+                    BeginInvoke((Action)(delegate()
+                    {
+                        if (!Program.IsStopping) StartServerAndPoll();
+                    }));
+                }
+                catch { }
+            });
+            t.IsBackground = true;
+            t.Start();
         }
 
         private void Shutdown()
@@ -834,6 +918,7 @@ namespace DshLauncher
             _tray.Visible = false;
             _tray.Dispose();
             _trayMenu.Dispose();
+            Program.KillInstallProc();      // 若正在安装, 一并终止, 避免留下残缺安装
             Program.ReleaseMutexIfOwned();
             Application.Exit();
         }
