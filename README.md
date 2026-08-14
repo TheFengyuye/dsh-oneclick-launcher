@@ -42,7 +42,17 @@ pwsh -File build.ps1
 
 ## 配置（可选）
 
-在 exe 同目录放一个 `launcher.config.txt` 即可覆盖默认值（全部可省略，省略则自动检测）：
+启动器窗口右上角（或托盘右键）有「**设置**」按钮，可以用文件夹选择器直接指定三个目录并保存，不用手写配置文件：
+
+| 设置项 | 说明 | 留空时默认 |
+|---|---|---|
+| 工作目录 | dsh 运行与工作所在的文件夹 | exe 所在目录 |
+| dsh 数据目录 | 会话/配置数据存放处（即 DSH_HOME） | `%USERPROFILE%\.dsh` |
+| 一键安装目录 | 首次自动安装 dsh 的文件夹 | `%LOCALAPPDATA%\DeepSeekHarness` |
+
+保存后如果服务正在运行会自动用新配置重启；设置写入 exe 同目录的 `launcher.config.txt`。
+
+也可以手动编辑配置文件（在 exe 同目录放一个 `launcher.config.txt` 即可覆盖默认值，全部可省略，省略则自动检测）：
 
 ```ini
 # Node.js 可执行文件路径 (留空自动检测)

@@ -51,12 +51,15 @@ namespace DshLauncher
         {
             bool selfTest = false;
             bool checkEnv = false;
+            bool saveConfig = false;
             for (int i = 0; i < args.Length; i++)
             {
                 if (string.Equals(args[i], "-selftest", StringComparison.OrdinalIgnoreCase))
                     selfTest = true;
                 else if (string.Equals(args[i], "-checkenv", StringComparison.OrdinalIgnoreCase))
                     checkEnv = true;
+                else if (string.Equals(args[i], "-saveconfig", StringComparison.OrdinalIgnoreCase))
+                    saveConfig = true;
                 else if (args[i].StartsWith("-config:", StringComparison.OrdinalIgnoreCase))
                     _configPath = args[i].Substring("-config:".Length);
             }
@@ -74,6 +77,12 @@ namespace DshLauncher
             Log("npm-cli=" + (NpmCli.Length > 0 ? NpmCli : "(not found)"));
             Log("dsh=" + (ResolvedDshBin ?? "(not installed)"));
             Log("installDir=" + DefaultInstallDir());
+
+            if (saveConfig)
+            {
+                SaveConfig();
+                return 0;
+            }
 
             if (selfTest)
             {
@@ -433,6 +442,48 @@ namespace DshLauncher
             }
         }
 
+        // ---------------- 设置窗口使用的读写接口 ----------------
+
+        internal static string ConfigWorkDir { get { return _workDir; } set { _workDir = value ?? ""; } }
+        internal static string ConfigDshHome { get { return _dshHome; } set { _dshHome = value ?? ""; } }
+        internal static string ConfigInstallDir { get { return _installDir; } set { _installDir = value ?? ""; } }
+
+        // 把当前配置完整写回配置文件 (exe 同目录的 launcher.config.txt, 或 -config: 指定的路径)
+        internal static void SaveConfig()
+        {
+            try
+            {
+                StringBuilder sb = new StringBuilder();
+                sb.AppendLine("# DeepSeek Harness 一键启动器 配置 (由「设置」窗口保存)");
+                sb.AppendLine("# Node.js 可执行文件路径 (留空自动检测)");
+                sb.AppendLine("NodeExe=" + _nodeExe);
+                sb.AppendLine("# dsh 入口 bin.js (留空自动检测)");
+                sb.AppendLine("DshBin=" + _dshBin);
+                sb.AppendLine("# Web GUI 地址与端口");
+                sb.AppendLine("Url=" + _url);
+                sb.AppendLine("Port=" + _port);
+                sb.AppendLine("# dsh 数据目录 (留空用 %USERPROFILE%\\.dsh)");
+                sb.AppendLine("DshHome=" + _dshHome);
+                sb.AppendLine("# 服务工作目录 (留空用 exe 所在目录)");
+                sb.AppendLine("WorkDir=" + _workDir);
+                sb.AppendLine("# 一键安装目录 (留空用 %LOCALAPPDATA%\\DeepSeekHarness)");
+                sb.AppendLine("InstallDir=" + _installDir);
+                File.WriteAllText(_configPath, sb.ToString(), new UTF8Encoding(false));
+                Log("config saved to " + _configPath);
+            }
+            catch (Exception ex)
+            {
+                Log("save config error: " + ex.Message);
+            }
+        }
+
+        internal static void ResetStopping() { _stopping = false; }
+
+        internal static bool IsServerRunning
+        {
+            get { try { return _serverProc != null && !_serverProc.HasExited; } catch { return false; } }
+        }
+
         private static string ResolvedDshHome()
         {
             if (_dshHome.Length > 0) return _dshHome;
@@ -650,6 +701,7 @@ namespace DshLauncher
         private Button _btnOpen;
         private Button _btnInstall;
         private Button _btnStop;
+        private Button _btnSettings;
         private NotifyIcon _tray;
         private ContextMenuStrip _trayMenu;
         private bool _serverUp;
@@ -705,9 +757,16 @@ namespace DshLauncher
 
             _statusLabel = new Label();
             _statusLabel.Location = new Point(16, 14);
-            _statusLabel.Size = new Size(368, 28);
+            _statusLabel.Size = new Size(298, 28);
             _statusLabel.TextAlign = ContentAlignment.MiddleLeft;
             Controls.Add(_statusLabel);
+
+            _btnSettings = new Button();
+            _btnSettings.Text = "设置";
+            _btnSettings.Location = new Point(322, 12);
+            _btnSettings.Size = new Size(62, 26);
+            _btnSettings.Click += delegate { OpenSettings(); };
+            Controls.Add(_btnSettings);
 
             Label hint = new Label();
             hint.Location = new Point(16, 46);
@@ -762,6 +821,9 @@ namespace DshLauncher
             ToolStripMenuItem installItem = new ToolStripMenuItem("安装或更新 dsh");
             installItem.Click += delegate { InstallAndStart(); };
             _trayMenu.Items.Add(installItem);
+            ToolStripMenuItem settingsItem = new ToolStripMenuItem("设置");
+            settingsItem.Click += delegate { OpenSettings(); };
+            _trayMenu.Items.Add(settingsItem);
             ToolStripMenuItem stopItem = new ToolStripMenuItem("停止并退出");
             stopItem.Click += delegate { _btnStop.PerformClick(); };
             _trayMenu.Items.Add(stopItem);
@@ -802,6 +864,37 @@ namespace DshLauncher
                 return;
             }
             InstallAndStart();
+        }
+
+        // 打开设置窗口; 保存后若服务由本启动器管理, 用新配置重启服务
+        private void OpenSettings()
+        {
+            using (SettingsForm f = new SettingsForm())
+            {
+                if (f.ShowDialog(this) == DialogResult.OK)
+                {
+                    if (Program.OwnsServer)
+                    {
+                        RestartServerWithNewSettings();
+                    }
+                    else
+                    {
+                        _statusLabel.Text = "设置已保存, 下次启动生效。";
+                    }
+                }
+            }
+        }
+
+        private void RestartServerWithNewSettings()
+        {
+            Program.StopServer();
+            Program.ResetStopping();
+            _serverUp = false;
+            _starting = false;
+            _timeoutShown = false;
+            _restartCount = 0;
+            Program.Log("restarting server with new settings.");
+            StartServerAndPoll();
         }
 
         private void StartServerAndPoll()
@@ -984,6 +1077,114 @@ namespace DshLauncher
                 _tray.Dispose();
             }
             base.Dispose(disposing);
+        }
+    }
+
+    // 设置窗口: 用文件夹选择器配置 工作目录 / dsh 数据目录 / 一键安装目录, 保存到 launcher.config.txt
+    internal class SettingsForm : Form
+    {
+        private TextBox _txtWorkDir;
+        private TextBox _txtDshHome;
+        private TextBox _txtInstallDir;
+
+        public SettingsForm()
+        {
+            BuildUi();
+        }
+
+        private void BuildUi()
+        {
+            Text = "设置 · DeepSeek Harness";
+            FormBorderStyle = FormBorderStyle.FixedDialog;
+            MaximizeBox = false;
+            MinimizeBox = false;
+            StartPosition = FormStartPosition.CenterParent;
+            ClientSize = new Size(500, 268);
+            Font = new Font("Microsoft YaHei UI", 9F);
+
+            AddRow(16, "工作目录:", "dsh 运行与工作所在的文件夹 (留空 = exe 所在目录)", Program.ConfigWorkDir, out _txtWorkDir);
+            AddRow(86, "dsh 数据目录:", "会话/配置数据存放处 (留空 = %USERPROFILE%\\.dsh)", Program.ConfigDshHome, out _txtDshHome);
+            AddRow(156, "一键安装目录:", "首次自动安装 dsh 的文件夹 (留空 = %LOCALAPPDATA%\\DeepSeekHarness)", Program.ConfigInstallDir, out _txtInstallDir);
+
+            Button btnSave = new Button();
+            btnSave.Text = "保存";
+            btnSave.Location = new Point(306, 226);
+            btnSave.Size = new Size(84, 30);
+            btnSave.Click += delegate { OnSave(); };
+            Controls.Add(btnSave);
+
+            Button btnCancel = new Button();
+            btnCancel.Text = "取消";
+            btnCancel.Location = new Point(400, 226);
+            btnCancel.Size = new Size(84, 30);
+            btnCancel.Click += delegate { DialogResult = DialogResult.Cancel; Close(); };
+            Controls.Add(btnCancel);
+
+            AcceptButton = btnSave;
+            CancelButton = btnCancel;
+        }
+
+        // 一行 = 说明标签 + 输入框 + 浏览按钮 + 恢复默认按钮
+        private void AddRow(int y, string caption, string description, string value, out TextBox tb)
+        {
+            Label lbl = new Label();
+            lbl.Text = caption;
+            lbl.Location = new Point(16, y);
+            lbl.Size = new Size(120, 24);
+            lbl.TextAlign = ContentAlignment.MiddleLeft;
+            Controls.Add(lbl);
+
+            Label desc = new Label();
+            desc.Text = description;
+            desc.Location = new Point(140, y);
+            desc.Size = new Size(344, 24);
+            desc.TextAlign = ContentAlignment.MiddleLeft;
+            desc.ForeColor = Color.Gray;
+            desc.Font = new Font("Microsoft YaHei UI", 8F);
+            Controls.Add(desc);
+
+            TextBox box = new TextBox();
+            box.Text = value;
+            box.Location = new Point(16, y + 24);
+            box.Size = new Size(340, 24);
+            Controls.Add(box);
+
+            Button btnBrowse = new Button();
+            btnBrowse.Text = "浏览…";
+            btnBrowse.Location = new Point(364, y + 22);
+            btnBrowse.Size = new Size(56, 26);
+            btnBrowse.Click += delegate
+            {
+                using (FolderBrowserDialog dlg = new FolderBrowserDialog())
+                {
+                    dlg.Description = description;
+                    if (box.Text.Length > 0 && Directory.Exists(box.Text)) dlg.SelectedPath = box.Text;
+                    if (dlg.ShowDialog(this) == DialogResult.OK)
+                    {
+                        box.Text = dlg.SelectedPath;
+                    }
+                }
+            };
+            Controls.Add(btnBrowse);
+
+            Button btnDefault = new Button();
+            btnDefault.Text = "默认";
+            btnDefault.Location = new Point(428, y + 22);
+            btnDefault.Size = new Size(56, 26);
+            btnDefault.Click += delegate { box.Text = ""; };
+            Controls.Add(btnDefault);
+
+            tb = box;
+        }
+
+        private void OnSave()
+        {
+            Program.ConfigWorkDir = _txtWorkDir.Text.Trim();
+            Program.ConfigDshHome = _txtDshHome.Text.Trim();
+            Program.ConfigInstallDir = _txtInstallDir.Text.Trim();
+            Program.SaveConfig();
+            DialogResult = DialogResult.OK;
+            Close();
         }
     }
 }
