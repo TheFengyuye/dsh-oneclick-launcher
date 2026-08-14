@@ -35,7 +35,9 @@ namespace DshLauncher
         internal static string ResolvedDshBin;   // dsh bin.js 完整路径 (null = 未安装)
         internal static string NpmCli;           // npm-cli.js 路径 (可能为空)
 
-        private static string _configPath;
+        private static string _configPath;       // exe 目录或 -config: 指定的基础配置
+        private static string _sharedConfigPath; // 用户级共享配置 (设置窗口的保存位置, 所有 exe 通用)
+        private static bool _configSpecified;    // 是否通过 -config: 显式指定
         private static string _logPath;
         private static string _serverLogPath;
         private static readonly object LogLock = new object();
@@ -61,16 +63,22 @@ namespace DshLauncher
                 else if (string.Equals(args[i], "-saveconfig", StringComparison.OrdinalIgnoreCase))
                     saveConfig = true;
                 else if (args[i].StartsWith("-config:", StringComparison.OrdinalIgnoreCase))
+                {
                     _configPath = args[i].Substring("-config:".Length);
+                    _configSpecified = true;
+                }
             }
 
             _configPath = _configPath ?? Path.Combine(Application.StartupPath, "launcher.config.txt");
+            _sharedConfigPath = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "DeepSeekHarnessLauncher", "launcher.config.txt");
             _logPath = Path.Combine(Application.StartupPath, "launcher.log");
             _serverLogPath = Path.Combine(Application.StartupPath, "dsh-server.log");
             LoadConfig();
 
             Log("=== launcher start (pid=" + Process.GetCurrentProcess().Id + ") ===");
-            Log("config=" + _configPath + " | url=" + _url);
+            Log("config=" + _configPath + (File.Exists(_sharedConfigPath) ? " + shared=" + _sharedConfigPath : "") + " | url=" + _url);
 
             ResolveEnvironment();
             Log("node=" + (ResolvedNodeExe ?? "(not found)"));
@@ -410,10 +418,17 @@ namespace DshLauncher
 
         private static void LoadConfig()
         {
-            if (!File.Exists(_configPath)) return;
+            // 基础层: exe 目录 (或 -config: 指定) 的配置, 便携/分发场景用
+            if (File.Exists(_configPath)) LoadConfigFile(_configPath);
+            // 用户层: 设置窗口保存的共享配置, 所有 exe 通用, 优先级更高
+            if (!_configSpecified && File.Exists(_sharedConfigPath)) LoadConfigFile(_sharedConfigPath);
+        }
+
+        private static void LoadConfigFile(string path)
+        {
             try
             {
-                string[] lines = File.ReadAllLines(_configPath);
+                string[] lines = File.ReadAllLines(path);
                 foreach (string raw in lines)
                 {
                     string line = raw.Trim();
@@ -434,11 +449,11 @@ namespace DshLauncher
                         case "installdir": _installDir = val; break;
                     }
                 }
-                Log("config loaded from " + _configPath);
+                Log("config loaded from " + path);
             }
             catch (Exception ex)
             {
-                Log("config load error: " + ex.Message);
+                Log("config load error (" + path + "): " + ex.Message);
             }
         }
 
@@ -448,13 +463,20 @@ namespace DshLauncher
         internal static string ConfigDshHome { get { return _dshHome; } set { _dshHome = value ?? ""; } }
         internal static string ConfigInstallDir { get { return _installDir; } set { _installDir = value ?? ""; } }
 
-        // 把当前配置完整写回配置文件 (exe 同目录的 launcher.config.txt, 或 -config: 指定的路径)
+        // 把当前配置保存到用户级共享位置, 保证以后双击任意一个 exe 都自动生效, 无需重新配置
+        // (仅当通过 -config: 显式指定时才写到指定路径, 便于脚本化)
         internal static void SaveConfig()
         {
             try
             {
+                string target = _configSpecified ? _configPath : _sharedConfigPath;
+                if (!_configSpecified)
+                {
+                    string dir = Path.GetDirectoryName(target);
+                    if (dir != null && !Directory.Exists(dir)) Directory.CreateDirectory(dir);
+                }
                 StringBuilder sb = new StringBuilder();
-                sb.AppendLine("# DeepSeek Harness 一键启动器 配置 (由「设置」窗口保存)");
+                sb.AppendLine("# DeepSeek Harness 一键启动器 配置 (由「设置」窗口保存, 所有 exe 通用)");
                 sb.AppendLine("# Node.js 可执行文件路径 (留空自动检测)");
                 sb.AppendLine("NodeExe=" + _nodeExe);
                 sb.AppendLine("# dsh 入口 bin.js (留空自动检测)");
@@ -468,8 +490,8 @@ namespace DshLauncher
                 sb.AppendLine("WorkDir=" + _workDir);
                 sb.AppendLine("# 一键安装目录 (留空用 %LOCALAPPDATA%\\DeepSeekHarness)");
                 sb.AppendLine("InstallDir=" + _installDir);
-                File.WriteAllText(_configPath, sb.ToString(), new UTF8Encoding(false));
-                Log("config saved to " + _configPath);
+                File.WriteAllText(target, sb.ToString(), new UTF8Encoding(false));
+                Log("config saved to " + target);
             }
             catch (Exception ex)
             {

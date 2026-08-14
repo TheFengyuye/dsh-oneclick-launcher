@@ -50,9 +50,13 @@ pwsh -File build.ps1
 | dsh 数据目录 | 会话/配置数据存放处（即 DSH_HOME） | `%USERPROFILE%\.dsh` |
 | 一键安装目录 | 首次自动安装 dsh 的文件夹 | `%LOCALAPPDATA%\DeepSeekHarness` |
 
-保存后如果服务正在运行会自动用新配置重启；设置写入 exe 同目录的 `launcher.config.txt`。
+保存后如果服务正在运行会自动用新配置重启。
 
-也可以手动编辑配置文件（在 exe 同目录放一个 `launcher.config.txt` 即可覆盖默认值，全部可省略，省略则自动检测）：
+**配置是持久的，配一次下次直接用**：设置保存到用户级共享位置
+`%LOCALAPPDATA%\DeepSeekHarnessLauncher\launcher.config.txt`，
+无论双击哪个 exe（哪怕把 exe 复制到别的文件夹）都会自动读取同一份配置，不需要重新配置。
+
+也可以手动编辑配置文件（exe 同目录放一个 `launcher.config.txt` 作为便携基础层，用户级共享配置优先级更高；全部可省略，省略则自动检测）：
 
 ```ini
 # Node.js 可执行文件路径 (留空自动检测)
