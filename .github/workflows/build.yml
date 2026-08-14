@@ -5,6 +5,10 @@ on:
     tags: ["v*"]
   workflow_dispatch:
 
+# 需要写权限才能创建 Release 并上传 exe 附件
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: windows-latest
